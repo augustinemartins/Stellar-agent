@@ -321,6 +321,9 @@ impl AgenticCommerceContract {
         // Pull funds into contract escrow.
         let token_client = token::TokenClient::new(&env, &token);
         let contract_addr = env.current_contract_address();
+        // Sanity check (#17): `balance()` panics if `token` isn't a real SAC,
+        // failing fast here instead of with a confusing error later.
+        token_client.balance(&contract_addr);
         token_client.transfer(&client_addr, &contract_addr, &budget);
 
         let now = env.ledger().timestamp();
