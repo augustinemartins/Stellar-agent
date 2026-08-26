@@ -381,6 +381,15 @@ impl AgenticCommerceContract {
         if job.status != JobStatus::Funded {
             panic!("invalid status");
         }
+        // #20 — reject empty or whitespace-only deliverables; a blank URI
+        // would defeat the purpose of the escrow.
+        let is_blank = deliverable
+            .to_bytes()
+            .iter()
+            .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'));
+        if is_blank {
+            panic!("deliverable cannot be empty");
+        }
         job.status = JobStatus::Submitted;
         job.deliverable = deliverable;
         job.updated_at = env.ledger().timestamp();
