@@ -118,6 +118,17 @@ pub struct JobCancelled {
     pub job_id: u64,
 }
 
+/// Emitted when a provider claims payout after evaluator timeout (#18).
+#[contractevent]
+pub struct JobExpired {
+    #[topic]
+    pub provider: Address,
+    pub job_id: u64,
+    pub payout: i128,
+    pub fee: i128,
+    pub timestamp: u64,
+}
+
 /// Emitted when the contract is emergency-paused.
 #[contractevent]
 pub struct Paused {
@@ -558,6 +569,58 @@ impl AgenticCommerceContract {
         JobRefunded {
             client: caller,
             job_id: id,
+        }
+        .publish(&env);
+    }
+
+    /// Provider claims payout if the evaluator never completed the job and the
+    /// timeout has passed. Mirrors `claim_refund`'s timeout pattern for the
+    /// `Submitted` state, preventing a non-responsive evaluator from locking
+    /// the provider's payment forever (#18).
+    pub fn claim_expired(env: Env, caller: Address, id: u64) {
+        Self::require_not_paused(&env); // #29
+        caller.require_auth();
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(id))
+            .unwrap_or_else(|| panic!("job not found"));
+        if caller != job.provider {
+            panic!("not provider");
+        }
+        if job.status != JobStatus::Submitted {
+            panic!("invalid status");
+        }
+        let now = env.ledger().timestamp();
+        // `updated_at` is set to the submission time by `submit()` and does
+        // not change again while status remains `Submitted`.
+        if now < job.updated_at + REFUND_TIMEOUT_SECS {
+            panic!("timeout not reached");
+        }
+        // #28 — overflow-safe fee: divide first, then multiply.
+        let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap();
+        let fee: i128 = Self::compute_fee(job.budget, fee_bps);
+        let payout: i128 = job.budget - fee;
+
+        job.status = JobStatus::Completed;
+        job.released = job.budget;
+        job.updated_at = now;
+        env.storage().persistent().set(&DataKey::Job(id), &job);
+
+        let token_client = token::TokenClient::new(&env, &job.token);
+        let contract_addr = env.current_contract_address();
+        token_client.transfer(&contract_addr, &job.provider, &payout);
+        if fee > 0 {
+            let treasury: Address = env.storage().instance().get(&DataKey::Treasury).unwrap();
+            token_client.transfer(&contract_addr, &treasury, &fee);
+        }
+
+        JobExpired {
+            provider: caller,
+            job_id: id,
+            payout,
+            fee,
+            timestamp: now,
         }
         .publish(&env);
     }
