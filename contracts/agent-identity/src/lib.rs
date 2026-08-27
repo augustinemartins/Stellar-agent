@@ -321,9 +321,15 @@ impl AgentIdentityContract {
             .unwrap_or(0u32)
     }
 
-    /// Contract version. Bump on ABI changes. Read from instance storage.
+    /// Contract version. Read from instance storage if set, otherwise derived
+    /// at compile time from the crate's Cargo.toml major version (#14), so it
+    /// no longer needs a manual bump on every release.
     pub fn version(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::Version).unwrap_or(1u32)
+        env.storage().instance().get(&DataKey::Version).unwrap_or_else(|| {
+            env!("CARGO_PKG_VERSION_MAJOR")
+                .parse()
+                .expect("invalid CARGO_PKG_VERSION_MAJOR")
+        })
     }
 }
 

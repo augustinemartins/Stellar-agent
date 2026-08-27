@@ -24,7 +24,8 @@ fn contract_can_be_deployed() {
     let env = Env::default();
     let contract_id = env.register(AgentIdentityContract, ());
     let client = AgentIdentityContractClient::new(&env, &contract_id);
-    assert_eq!(client.version(), 1);
+    // Derived from the workspace's Cargo.toml major version (0.1.0 -> 0).
+    assert_eq!(client.version(), 0);
 }
 
 #[test]
