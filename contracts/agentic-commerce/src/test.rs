@@ -595,6 +595,91 @@ fn get_job_returns_none_for_nonexistent_id() {
 }
 
 // ---------------------------------------------------------------------------
+// #21 — jobs_by_provider / jobs_by_client
+// ---------------------------------------------------------------------------
+#[test]
+fn jobs_by_provider_returns_only_that_providers_jobs() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _treasury) = setup(&env);
+
+    let buyer = Address::generate(&env);
+    let seller_a = Address::generate(&env);
+    let seller_b = Address::generate(&env);
+    let (token_addr, _token, stellar_token) = deploy_token(&env, &admin);
+    stellar_token.mint(&buyer, &1_000_000);
+
+    let desc = String::from_str(&env, "job");
+    let id_a1 = client.create_job(&buyer, &seller_a, &buyer, &token_addr, &1_000i128, &desc);
+    client.create_job(&buyer, &seller_b, &buyer, &token_addr, &1_000i128, &desc);
+    let id_a2 = client.create_job(&buyer, &seller_a, &buyer, &token_addr, &1_000i128, &desc);
+
+    let seller_a_jobs = client.jobs_by_provider(&seller_a, &1u64, &10u32);
+    assert_eq!(seller_a_jobs.len(), 2);
+    assert_eq!(seller_a_jobs.get(0).unwrap().id, id_a1);
+    assert_eq!(seller_a_jobs.get(1).unwrap().id, id_a2);
+}
+
+#[test]
+fn jobs_by_client_returns_only_that_clients_jobs() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _treasury) = setup(&env);
+
+    let buyer_a = Address::generate(&env);
+    let buyer_b = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let (token_addr, _token, stellar_token) = deploy_token(&env, &admin);
+    stellar_token.mint(&buyer_a, &1_000_000);
+    stellar_token.mint(&buyer_b, &1_000_000);
+
+    let desc = String::from_str(&env, "job");
+    client.create_job(&buyer_a, &seller, &buyer_a, &token_addr, &1_000i128, &desc);
+    let id_b = client.create_job(&buyer_b, &seller, &buyer_b, &token_addr, &1_000i128, &desc);
+
+    let buyer_b_jobs = client.jobs_by_client(&buyer_b, &1u64, &10u32);
+    assert_eq!(buyer_b_jobs.len(), 1);
+    assert_eq!(buyer_b_jobs.get(0).unwrap().id, id_b);
+}
+
+#[test]
+fn jobs_by_provider_respects_limit_and_start_id() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _treasury) = setup(&env);
+
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let (token_addr, _token, stellar_token) = deploy_token(&env, &admin);
+    stellar_token.mint(&buyer, &1_000_000);
+
+    let desc = String::from_str(&env, "job");
+    client.create_job(&buyer, &seller, &buyer, &token_addr, &1_000i128, &desc);
+    let id2 = client.create_job(&buyer, &seller, &buyer, &token_addr, &1_000i128, &desc);
+    client.create_job(&buyer, &seller, &buyer, &token_addr, &1_000i128, &desc);
+
+    // limit=1 from the start returns only the first match.
+    let first_page = client.jobs_by_provider(&seller, &1u64, &1u32);
+    assert_eq!(first_page.len(), 1);
+
+    // starting after job 1 skips it.
+    let from_id2 = client.jobs_by_provider(&seller, &2u64, &10u32);
+    assert_eq!(from_id2.len(), 2);
+    assert_eq!(from_id2.get(0).unwrap().id, id2);
+}
+
+#[test]
+fn jobs_by_provider_returns_empty_for_unknown_provider() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _treasury) = setup(&env);
+
+    let stranger = Address::generate(&env);
+    let jobs = client.jobs_by_provider(&stranger, &1u64, &10u32);
+    assert_eq!(jobs.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
 // 5. Cancelling an already-cancelled job panics with "invalid status"
 // ---------------------------------------------------------------------------
 #[test]
