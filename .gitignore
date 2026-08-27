@@ -42,3 +42,18 @@ out/
 
 # Mutation testing results
 mutation-results-*/
+
+# Test snapshots
+test_snapshots/
+*.snap
+
+# Coverage
+coverage/
+*.lcov
+
+# Agent runtime artifacts
+agents/*/output/
+current-task.txt
+
+# Explicit env overrides
+demo/.env

@@ -31,11 +31,13 @@ const MIME_TYPES = {
 const FALLBACK_CONTRACTS = {
   agent_identity: {
     address: "CAMPXYFZJTIPEVOPOAZPRG5OHXKNBDPGTPRCOIO4LVPGEM4TONPY65A5",
-    explorer: "https://stellar.expert/explorer/testnet/contract/CAMPXYFZJTIPEVOPOAZPRG5OHXKNBDPGTPRCOIO4LVPGEM4TONPY65A5",
+    explorer:
+      "https://stellar.expert/explorer/testnet/contract/CAMPXYFZJTIPEVOPOAZPRG5OHXKNBDPGTPRCOIO4LVPGEM4TONPY65A5",
   },
   agentic_commerce: {
     address: "CD2KWU7IE74Z2QKVP3FQ67J46XHNMGIDTNKXVWE7ZNVRC7T6UH46GQXE",
-    explorer: "https://stellar.expert/explorer/testnet/contract/CD2KWU7IE74Z2QKVP3FQ67J46XHNMGIDTNKXVWE7ZNVRC7T6UH46GQXE",
+    explorer:
+      "https://stellar.expert/explorer/testnet/contract/CD2KWU7IE74Z2QKVP3FQ67J46XHNMGIDTNKXVWE7ZNVRC7T6UH46GQXE",
   },
 };
 
