@@ -90,11 +90,24 @@ await pollWithBackoff(
   pollConfig,
 );
 
-// Step 3: Call seller's paywalled API via marcFetch (auto-pays 402)
+// Step 3: Call seller's paywalled API via marcFetch (auto-pays 402 with exponential backoff retry)
 const paidFetch = marcFetch({ signer: buyer, rpcUrl: cfg.rpcUrl });
 console.log(`[3] Calling seller API with auto-pay…`);
-const res = await paidFetch(`http://localhost:${sellerPort}/api/work`);
-const data = await res.json();
+let res: Response | undefined;
+await pollWithBackoff(
+  async () => {
+    try {
+      res = await paidFetch(`http://localhost:${sellerPort}/api/work`);
+      return res.ok;
+    } catch (err) {
+      console.log(`    [retry] API call pending or testnet congested (${(err as Error).message})`);
+      return false;
+    }
+  },
+  "seller API request via marcFetch",
+  pollConfig,
+);
+const data = await res!.json();
 console.log(`    Response: ${JSON.stringify(data)}`);
 
 // Step 4: Complete job (buyer=evaluator) → triggers 99/1 split

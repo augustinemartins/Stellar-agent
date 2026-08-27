@@ -55,7 +55,7 @@ if (usePlainLog) {
 process.stdout.on("resize", () => {
   if (!usePlainLog && terminalTooSmall()) {
     usePlainLog = true;
-    try { screen.destroy(); } catch { /* ignore */ }
+    try { screen?.destroy(); } catch { /* ignore */ }
     console.warn(
       `\n⚠  Terminal resized below minimum (${process.stdout.columns}×${process.stdout.rows}).  ` +
       `Switching to plain-text output.\n`,
@@ -65,43 +65,55 @@ process.stdout.on("resize", () => {
 
 // ── TUI ───────────────────────────────────────────────────────────────────────
 
-const screen = blessed.screen({ smartCSR: true, title: "MARC Marketplace" });
+let screen: blessed.Widgets.Screen | null = null;
+let sellersBox: blessed.Widgets.BoxElement | null = null;
+let buyersBox: blessed.Widgets.BoxElement | null = null;
+let treasuryBox: blessed.Widgets.BoxElement | null = null;
+let feedBox: blessed.Widgets.Log | null = null;
 
-// All widths/heights are percentages so blessed handles reflow automatically.
-const sellersBox = blessed.box({
-  top: 0, left: 0, width: "50%", height: "45%",
-  label: " SELLERS ",
-  border: { type: "line" },
-  tags: true,
-  style: { border: { fg: "cyan" }, label: { fg: "cyan", bold: true } },
-});
-const buyersBox = blessed.box({
-  top: 0, left: "50%", width: "50%", height: "45%",
-  label: " BUYERS ",
-  border: { type: "line" },
-  tags: true,
-  style: { border: { fg: "magenta" }, label: { fg: "magenta", bold: true } },
-});
-const treasuryBox = blessed.box({
-  top: "45%", left: 0, width: "100%", height: "10%",
-  label: " TREASURY ",
-  border: { type: "line" },
-  tags: true,
-  style: { border: { fg: "green" }, label: { fg: "green", bold: true } },
-});
-const feedBox = blessed.log({
-  top: "55%", left: 0, width: "100%", height: "45%",
-  label: " ACTIVITY FEED ",
-  border: { type: "line" },
-  tags: true, scrollable: true, alwaysScroll: true,
-  style: { border: { fg: "yellow" }, label: { fg: "yellow", bold: true } },
-});
+if (!usePlainLog) {
+  try {
+    screen = blessed.screen({ smartCSR: true, title: "MARC Marketplace" });
 
-screen.append(sellersBox);
-screen.append(buyersBox);
-screen.append(treasuryBox);
-screen.append(feedBox);
-screen.key(["q", "C-c"], () => process.exit(0));
+    // All widths/heights are percentages so blessed handles reflow automatically.
+    sellersBox = blessed.box({
+      top: 0, left: 0, width: "50%", height: "45%",
+      label: " SELLERS ",
+      border: { type: "line" },
+      tags: true,
+      style: { border: { fg: "cyan" }, label: { fg: "cyan", bold: true } },
+    });
+    buyersBox = blessed.box({
+      top: 0, left: "50%", width: "50%", height: "45%",
+      label: " BUYERS ",
+      border: { type: "line" },
+      tags: true,
+      style: { border: { fg: "magenta" }, label: { fg: "magenta", bold: true } },
+    });
+    treasuryBox = blessed.box({
+      top: "45%", left: 0, width: "100%", height: "10%",
+      label: " TREASURY ",
+      border: { type: "line" },
+      tags: true,
+      style: { border: { fg: "green" }, label: { fg: "green", bold: true } },
+    });
+    feedBox = blessed.log({
+      top: "55%", left: 0, width: "100%", height: "45%",
+      label: " ACTIVITY FEED ",
+      border: { type: "line" },
+      tags: true, scrollable: true, alwaysScroll: true,
+      style: { border: { fg: "yellow" }, label: { fg: "yellow", bold: true } },
+    });
+
+    screen.append(sellersBox);
+    screen.append(buyersBox);
+    screen.append(treasuryBox);
+    screen.append(feedBox);
+    screen.key(["q", "C-c"], () => process.exit(0));
+  } catch {
+    usePlainLog = true;
+  }
+}
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -151,31 +163,40 @@ function fitStatus(status: string, maxLen = 20): string {
 }
 
 function render() {
-  if (usePlainLog) return; // plain-text path handled by feed()
-  const spin = SPINNER[spinFrame];
-  sellersBox.setContent(sellers.map((s) =>
-    `{cyan-fg}${s.label}{/cyan-fg}  agent#${s.agentId ?? "?"}  ${isActive(s.status) ? spin + " " : "  "}${fitStatus(s.status)}  jobs:${s.jobs}  USDC:${s.usdc}`
-  ).join("\n"));
-  buyersBox.setContent(buyers.map((b) =>
-    `{magenta-fg}${b.label}{/magenta-fg}  agent#${b.agentId ?? "?"}  ${isActive(b.status) ? spin + " " : "  "}${fitStatus(b.status)}  jobs:${b.jobs}  USDC:${b.usdc}`
-  ).join("\n"));
-  treasuryBox.setContent(`{green-fg}${TESTNET.deployer}{/green-fg}  USDC: {bold}${treasuryUsdc}{/bold}`);
-  screen.render();
+  if (usePlainLog || !screen || !sellersBox || !buyersBox || !treasuryBox) return; // plain-text path handled by feed()
+  try {
+    const spin = SPINNER[spinFrame];
+    sellersBox.setContent(sellers.map((s) =>
+      `{cyan-fg}${s.label}{/cyan-fg}  agent#${s.agentId ?? "?"}  ${isActive(s.status) ? spin + " " : "  "}${fitStatus(s.status)}  jobs:${s.jobs}  USDC:${s.usdc}`
+    ).join("\n"));
+    buyersBox.setContent(buyers.map((b) =>
+      `{magenta-fg}${b.label}{/magenta-fg}  agent#${b.agentId ?? "?"}  ${isActive(b.status) ? spin + " " : "  "}${fitStatus(b.status)}  jobs:${b.jobs}  USDC:${b.usdc}`
+    ).join("\n"));
+    treasuryBox.setContent(`{green-fg}${TESTNET.deployer}{/green-fg}  USDC: {bold}${treasuryUsdc}{/bold}`);
+    screen.render();
+  } catch {
+    usePlainLog = true;
+  }
 }
 
 function feed(msg: string) {
   const ts = new Date().toTimeString().slice(0, 8);
   // Strip blessed tags for plain-text output
   const plain = msg.replace(/\{[^}]+\}/g, "");
-  if (usePlainLog) {
+  if (usePlainLog || !screen || !feedBox) {
     console.log(`[${ts}] ${plain}`);
     return;
   }
-  const cols = process.stdout.columns ?? MIN_COLS;
-  const maxLen = Math.max(40, cols - 12); // account for timestamp prefix
-  const truncated = msg.length > maxLen ? msg.slice(0, maxLen - 1) + "…" : msg;
-  feedBox.log(`{gray-fg}[${ts}]{/gray-fg} ${truncated}`);
-  screen.render();
+  try {
+    const cols = process.stdout.columns ?? MIN_COLS;
+    const maxLen = Math.max(40, cols - 12); // account for timestamp prefix
+    const truncated = msg.length > maxLen ? msg.slice(0, maxLen - 1) + "…" : msg;
+    feedBox.log(`{gray-fg}[${ts}]{/gray-fg} ${truncated}`);
+    screen.render();
+  } catch {
+    usePlainLog = true;
+    console.log(`[${ts}] ${plain}`);
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -23,15 +23,22 @@ const jobId = jobIdRaw !== undefined ? BigInt(jobIdRaw) : undefined;
 /**
  * Service price for the x402 paywall.
  *
- * Configurable via the SELLER_SERVICE_PRICE env var so it can be tuned
- * without touching source code.  Accepts any value that marcPaywall accepts,
- * e.g. "$0.01", "$1.00".  Defaults to "$0.01".
+ * Configurable via SELLER_SERVICE_PRICE or SERVICE_PRICE env vars, or passed
+ * dynamically via the `price` query parameter (e.g. `?price=$0.05` or `?price=10 MUSD`).
+ * Defaults to "$0.01".
  */
-const servicePrice: string = process.env.SELLER_SERVICE_PRICE ?? "$0.01";
+const getServicePrice = (req?: express.Request): string => {
+  if (req?.query?.price && typeof req.query.price === "string") {
+    return req.query.price;
+  }
+  return process.env.SELLER_SERVICE_PRICE ?? process.env.SERVICE_PRICE ?? "$0.01";
+};
+
+const servicePrice: string = getServicePrice();
 
 console.log(`\n=== SELLER DEMO ===`);
 console.log(`Seller: ${seller.publicKey()}`);
-console.log(`Service price: ${servicePrice}\n`);
+console.log(`Default service price: ${servicePrice} (configurable via SELLER_SERVICE_PRICE env var or ?price= query param)\n`);
 
 // Step 1: Register agent identity
 const identity = new IdentityClient(cfg);
@@ -47,15 +54,18 @@ if (!agentId) {
 const app = express();
 app.use(cors());
 
-app.use("/api/work", marcPaywall({
-  payTo: seller.publicKey(),
-  price: servicePrice,           // ← driven by env var, not hardcoded
-  network: "stellar:testnet",
-  token: cfg.usdcToken,
-  description: "One MARC-protected API call",
-  facilitatorUrl: process.env.FACILITATOR_URL ?? process.env.X402_FACILITATOR_URL,
-  facilitatorApiKey: process.env.FACILITATOR_API_KEY ?? process.env.X402_FACILITATOR_API_KEY,
-}));
+app.use("/api/work", (req, res, next) => {
+  const price = getServicePrice(req);
+  return marcPaywall({
+    payTo: seller.publicKey(),
+    price,
+    network: "stellar:testnet",
+    token: cfg.usdcToken,
+    description: "One MARC-protected API call",
+    facilitatorUrl: process.env.FACILITATOR_URL ?? process.env.X402_FACILITATOR_URL,
+    facilitatorApiKey: process.env.FACILITATOR_API_KEY ?? process.env.X402_FACILITATOR_API_KEY,
+  })(req, res, next);
+});
 
 app.get("/api/work", (_req, res) => {
   console.log(`[2] Work request received — payment verified`);

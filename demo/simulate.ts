@@ -255,8 +255,62 @@ async function runStressTest(n: number): Promise<void> {
   }
 }
 
+// --- Cancel / Refund flow demo ---
+async function runCancelFlowDemo(): Promise<void> {
+  console.log("\n=== MARC MARKETPLACE CANCEL & REFUND DEMO ===\n");
+  const sellerKp = Keypair.random();
+  const buyerKp = Keypair.random();
+
+  console.log("Funding seller and buyer accounts via Friendbot...");
+  await Promise.all([
+    fundAccount(sellerKp.publicKey()),
+    fundAccount(buyerKp.publicKey()),
+    fundUsdc(buyerKp.publicKey()),
+  ]);
+
+  const identity = new IdentityClient(cfg);
+  const commerce = new CommerceClient(cfg);
+
+  console.log("Registering seller and buyer on-chain...");
+  const [sellerId, buyerId] = await Promise.all([
+    identity.register(sellerKp, "ipfs://cancel-seller-metadata.json"),
+    identity.register(buyerKp, "ipfs://cancel-buyer-metadata.json"),
+  ]);
+  console.log(`  Seller registered as agent #${sellerId}`);
+  console.log(`  Buyer registered as agent #${buyerId}`);
+
+  console.log("\nCreating escrow job (1 USDC locked)...");
+  const jobId = await commerce.createJob(
+    buyerKp,
+    sellerKp.publicKey(),
+    buyerKp.publicKey(),
+    cfg.usdcToken,
+    BUDGET,
+    "Cancel-flow demonstration job",
+  );
+  console.log(`  Job #${jobId} created — funds held in escrow contract.`);
+
+  console.log("\nCancelling job before deliverable submission...");
+  await commerce.cancel(buyerKp, jobId);
+
+  const job = await commerce.getJob(jobId);
+  console.log(`  Job #${jobId} status: ${job?.status ?? "unknown"} (expected: Cancelled)`);
+  if (job?.status === JobStatus.Cancelled) {
+    console.log("\n✅  CANCEL & REFUND DEMO SUCCESSFUL — locked funds returned to buyer balance.");
+  } else {
+    console.error("\n❌  CANCEL DEMO FAILED — unexpected status:", job?.status);
+    process.exit(1);
+  }
+}
+
 // --- Main ---
 async function main() {
+  const cancelIdx = process.argv.indexOf("--cancel");
+  if (cancelIdx !== -1) {
+    await runCancelFlowDemo();
+    process.exit(0);
+  }
+
   const stressIdx = process.argv.indexOf("--stress");
   if (stressIdx !== -1) {
     const n = parseInt(process.argv[stressIdx + 1] ?? "", 10);
