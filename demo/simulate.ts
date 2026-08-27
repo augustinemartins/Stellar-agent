@@ -56,12 +56,8 @@ function fmtError(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
   // Replace long hex runs that look like XDR payloads with their decoded form.
   return err.message.replace(/\b([0-9a-f]{32,})\b/gi, (hex) => {
-    try {
-      const decoded = scValToNative(xdr.ScVal.fromXDR(hex, "hex"));
-      return `[ScVal: ${JSON.stringify(decoded)}]`;
-    } catch {
-      return hex;
-    }
+    const decoded = decodeScVal(hex);
+    return decoded === hex ? hex : `[ScVal: ${JSON.stringify(decoded)}]`;
   });
 }
 
