@@ -40,12 +40,21 @@
     if (btnWrapper) StellarWalletsKit.createButton(btnWrapper);
     // Listen for wallet state changes
     StellarWalletsKit.on(KitEventType.STATE_UPDATED, function (event) {
-      var addr = event.payload && event.payload.address;
-      if (addr && addr.length > 10) {
-        wallet.connected = true;
-        wallet.publicKey = addr;
-        updateWalletUI();
+      var addr = event.payload && (event.payload.address || (event.payload.accounts && event.payload.accounts[0] && event.payload.accounts[0].address));
+      if (!addr || addr.length <= 10) {
+        // Fallback: fetch current address from SWK
+        StellarWalletsKit.getAddress()
+          .then(function (res) {
+            wallet.connected = true;
+            wallet.publicKey = res.address;
+            updateWalletUI();
+          })
+          .catch(function () {});
+        return;
       }
+      wallet.connected = true;
+      wallet.publicKey = addr;
+      updateWalletUI();
     });
     swkReady = true;
   }
@@ -54,33 +63,54 @@
   async function detectFreighter() {
     try {
       const api = window.freighterApi || window.freighter;
-      if (api && typeof api.getPublicKey === "function") {
-        const pk = await api.getPublicKey();
-        let net = null;
-        if (typeof api.getNetwork === "function") {
-          try {
-            const n = await api.getNetwork();
-            // freighter may return 'TESTNET'|'PUBLIC' or a passphrase string
-            if (String(n).toLowerCase().includes("test")) net = "testnet";
-            else if (
-              String(n).toLowerCase().includes("pub") ||
-              String(n).toLowerCase().includes("main")
-            )
-              net = "mainnet";
-          } catch (e) {}
-        }
-        wallet.connected = true;
-        wallet.publicKey = pk;
-        wallet.network = net || null;
-        updateWalletUI();
+      if (!api || typeof api.getPublicKey !== "function") return;
+      const pk = await api.getPublicKey();
+      if (!pk || pk.length <= 10) return;
+      let net = null;
+      if (typeof api.getNetwork === "function") {
+        try {
+          const n = await api.getNetwork();
+          if (String(n).toLowerCase().includes("test")) net = "testnet";
+          else if (
+            String(n).toLowerCase().includes("pub") ||
+            String(n).toLowerCase().includes("main")
+          )
+            net = "mainnet";
+        } catch (e) {}
+      }
+      wallet.connected = true;
+      wallet.publicKey = pk;
+      wallet.network = net;
+      updateWalletUI();
+      if (typeof api.onNetworkChanged === "function") {
+        api.onNetworkChanged(function (n) {
+          let updatedNet = null;
+          if (String(n).toLowerCase().includes("test")) updatedNet = "testnet";
+          else if (
+            String(n).toLowerCase().includes("pub") ||
+            String(n).toLowerCase().includes("main")
+          )
+            updatedNet = "mainnet";
+          wallet.network = updatedNet;
+          updateWalletUI();
+        });
       }
     } catch (e) {
       // ignore
     }
   }
 
-  // Try detect Freighter immediately
-  detectFreighter();
+  // Retry Freighter detection a few times on load
+  async function retryDetectFreighter(attempts) {
+    if (attempts <= 0) return;
+    await detectFreighter();
+    if (!wallet.connected) {
+      setTimeout(function () {
+        retryDetectFreighter(attempts - 1);
+      }, 1000);
+    }
+  }
+  retryDetectFreighter(3);
 
   function disconnectWallet() {
     wallet.connected = false;
@@ -258,8 +288,12 @@
     const el = document.createElement("div");
     el.className = "toast " + type;
     el.textContent = msg;
+    el.title = "Click to dismiss";
+    el.addEventListener("click", function () {
+      el.remove();
+    });
     document.getElementById("toasts").appendChild(el);
-    const autoDismissDuration = duration || (type === "error" ? 8000 : 3000);
+    const autoDismissDuration = duration || (type === "error" ? 30000 : 3000);
     setTimeout(() => el.remove(), autoDismissDuration);
   }
 
@@ -1142,6 +1176,7 @@
     if (overlay) overlay.remove();
     showTxOverlay("Registering agent on Stellar...");
     try {
+      let agentId = null;
       if (wallet.connected) {
         const res = await signAndSubmit("/agents/register", { wallet: "freighter", uri: uri });
         hideTxOverlay();
@@ -1152,9 +1187,23 @@
           body: { wallet: walletVal, uri: uri },
         });
         hideTxOverlay();
+        agentId = res.agentId;
         toast("Agent #" + res.agentId + " registered!");
       }
+      await new Promise((r) => setTimeout(r, 1500));
       await loadAgents();
+      if (agentId !== null && state.agents) {
+        const found = state.agents.find(function (a) { return String(a.id) === String(agentId); });
+        if (!found && wallet.connected) {
+          state.agents = state.agents.concat([
+            {
+              id: Number(agentId),
+              owner: wallet.publicKey,
+              uri: uri,
+            },
+          ]);
+        }
+      }
       renderAgents();
     } catch (e) {
       hideTxOverlay();
