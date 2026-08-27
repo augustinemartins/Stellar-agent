@@ -59,10 +59,8 @@ async function generate(task: string, depth: ResearchDepth = "standard"): Promis
 }
 
 Research depth: ${depth}
-${summaryGuidance}
-Include ${sources} sources. Each source must have a real, verifiable URL. The summary should cite sources by their index [1], [2], etc.
-
-Each source must have a real, verifiable URL. Include ${sourceRange} sources. ${detail} The summary should cite sources by their index [1], [2], etc.`,
+Include ${sourceRange} real, verifiable sources. Each source must have a real URL. The summary must cite sources by their index [1], [2], etc.
+${detail}`,
       },
     ],
   });
