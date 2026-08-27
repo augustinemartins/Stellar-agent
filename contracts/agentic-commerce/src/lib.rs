@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token, Address, Env, String};
+use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token, Address, Env, String, Vec};
 
 /// Contract-level error codes for agentic-commerce (#323).
 #[contracterror]
@@ -508,6 +508,46 @@ impl AgenticCommerceContract {
     /// Fetch a job by id.
     pub fn get_job(env: Env, id: u64) -> Option<Job> {
         env.storage().persistent().get(&DataKey::Job(id))
+    }
+
+    /// Returns up to `limit` jobs where `provider` is the job's provider,
+    /// scanning forward from `start_id` (#21). There is no secondary index by
+    /// provider address, so this scans the job id range; callers should page
+    /// through with `start_id` to bound the work done per call.
+    pub fn jobs_by_provider(env: Env, provider: Address, start_id: u64, limit: u32) -> Vec<Job> {
+        let mut result = Vec::new(&env);
+        let next_id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1u64);
+
+        let mut id = start_id;
+        while result.len() < limit && id < next_id {
+            let job: Option<Job> = env.storage().persistent().get(&DataKey::Job(id));
+            if let Some(job) = job {
+                if job.provider == provider {
+                    result.push_back(job);
+                }
+            }
+            id += 1;
+        }
+        result
+    }
+
+    /// Returns up to `limit` jobs where `client` is the job's client,
+    /// scanning forward from `start_id` (#21). Mirrors `jobs_by_provider`.
+    pub fn jobs_by_client(env: Env, client: Address, start_id: u64, limit: u32) -> Vec<Job> {
+        let mut result = Vec::new(&env);
+        let next_id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1u64);
+
+        let mut id = start_id;
+        while result.len() < limit && id < next_id {
+            let job: Option<Job> = env.storage().persistent().get(&DataKey::Job(id));
+            if let Some(job) = job {
+                if job.client == client {
+                    result.push_back(job);
+                }
+            }
+            id += 1;
+        }
+        result
     }
 
     /// Contract version. Bump on ABI changes.
