@@ -586,6 +586,62 @@ fn is_registered_false_for_unknown_and_deregistered_owner() {
     assert!(!client.is_registered(&alice));
 }
 
+/// #16 — updating a URI to the exact same value it already holds is not
+/// rejected; it succeeds as a no-op write.
+#[test]
+fn update_uri_to_same_value_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AgentIdentityContract, ());
+    let client = AgentIdentityContractClient::new(&env, &contract_id);
+
+    let alice = Address::generate(&env);
+    let uri = String::from_str(&env, "ipfs://a1.json");
+    let id = client.register(&alice, &uri);
+    client.update_uri(&alice, &id, &uri);
+
+    let agent = client.get_agent(&id).unwrap();
+    assert_eq!(agent.uri, uri);
+}
+
+/// #16 — deregistering an agent that was already deregistered must panic
+/// rather than silently succeeding, since the underlying record is gone.
+#[test]
+#[should_panic(expected = "agent not found")]
+fn deregister_already_deregistered_agent_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AgentIdentityContract, ());
+    let client = AgentIdentityContractClient::new(&env, &contract_id);
+
+    let alice = Address::generate(&env);
+    let id = client.register(&alice, &String::from_str(&env, "ipfs://a.json"));
+    client.deregister(&alice, &id);
+    client.deregister(&alice, &id);
+}
+
+/// #16 — after deregister + re-register, get_agent confirms the new id
+/// differs from the old one and the old id no longer resolves. This is
+/// intended: agent ids are append-only, per the `register()` doc comment.
+#[test]
+fn get_agent_after_re_register_returns_new_id() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AgentIdentityContract, ());
+    let client = AgentIdentityContractClient::new(&env, &contract_id);
+
+    let alice = Address::generate(&env);
+    let id1 = client.register(&alice, &String::from_str(&env, "ipfs://v1.json"));
+    client.deregister(&alice, &id1);
+    let id2 = client.register(&alice, &String::from_str(&env, "ipfs://v2.json"));
+
+    assert_ne!(id1, id2);
+    assert_eq!(client.get_agent(&id1), None);
+    let agent2 = client.get_agent(&id2).unwrap();
+    assert_eq!(agent2.owner, alice);
+    assert_eq!(agent2.id, id2);
+}
+
 #[test]
 fn get_agent_missing_does_not_bump_ttl() {
     // extend_ttl must NOT be called when get_agent returns None (no entry to
