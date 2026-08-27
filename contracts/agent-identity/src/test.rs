@@ -559,6 +559,34 @@ fn agent_of_read_ttl_bump_does_not_panic() {
 }
 
 #[test]
+fn is_registered_true_for_registered_owner() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AgentIdentityContract, ());
+    let client = AgentIdentityContractClient::new(&env, &contract_id);
+
+    let alice = Address::generate(&env);
+    client.register(&alice, &String::from_str(&env, "ipfs://a.json"));
+
+    assert!(client.is_registered(&alice));
+}
+
+#[test]
+fn is_registered_false_for_unknown_and_deregistered_owner() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AgentIdentityContract, ());
+    let client = AgentIdentityContractClient::new(&env, &contract_id);
+
+    let alice = Address::generate(&env);
+    assert!(!client.is_registered(&alice));
+
+    let id = client.register(&alice, &String::from_str(&env, "ipfs://a.json"));
+    client.deregister(&alice, &id);
+    assert!(!client.is_registered(&alice));
+}
+
+#[test]
 fn get_agent_missing_does_not_bump_ttl() {
     // extend_ttl must NOT be called when get_agent returns None (no entry to
     // bump). The test env panics if extend_ttl is called on a non-existent key,

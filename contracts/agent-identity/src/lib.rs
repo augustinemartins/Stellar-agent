@@ -234,6 +234,14 @@ impl AgentIdentityContract {
         result
     }
 
+    /// Returns true if `owner` currently has a registered agent. Equivalent
+    /// to `agent_of(owner).is_some()` without needing to unwrap the id (#15).
+    pub fn is_registered(env: Env, owner: Address) -> bool {
+        env.storage()
+            .persistent()
+            .has(&DataKey::OwnerToId(owner))
+    }
+
     /// Look up the agent id owned by `owner`, if any.
     pub fn agent_of(env: Env, owner: Address) -> Option<u64> {
         let key = DataKey::OwnerToId(owner);
