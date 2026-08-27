@@ -77,14 +77,12 @@ function loadExternalFonts() {
  * Self-hosted:  point script-url to your own Umami instance.
  */
 function loadAnalytics() {
-  const websiteId =
-    document.querySelector('meta[name="umami-website-id"]')?.content?.trim() ||
-    "";                       // <-- paste your Umami website ID here
+  const websiteId = document.querySelector('meta[name="umami-website-id"]')?.content?.trim() || ""; // <-- paste your Umami website ID here
   const scriptUrl =
     document.querySelector('meta[name="umami-script-url"]')?.content?.trim() ||
     "https://analytics.umami.is/script.js";
 
-  if (!websiteId) return;     // no ID configured — skip silently
+  if (!websiteId) return; // no ID configured — skip silently
 
   const script = document.createElement("script");
   script.defer = true;

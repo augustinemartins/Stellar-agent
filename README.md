@@ -203,6 +203,7 @@ const result = await marcFetch("https://agent.example/api/summarize", {
 
 - **[BEAR-PROTOCOL-GUIDE.md](./BEAR-PROTOCOL-GUIDE.md)** - Complete protocol guide, demo walkthrough, and FAQ
 - **[SDK README](./sdk/README.md)** - SDK API reference (scaffold)
+- **[MAINNET_MIGRATION.md](./docs/MAINNET_MIGRATION.md)** - Security audit checklist, infrastructure hardening, tokenomics, and legal considerations for mainnet
 
 ## License
 

@@ -223,15 +223,22 @@ impl AgentIdentityContract {
     }
 
     /// Fetch an agent by id.
-    pub fn get_agent(env: Env, id: u64) -> Option<Agent> {
+    ///
+    /// Panics with `Error::AgentNotFound` if the agent does not exist or has
+    /// been deregistered. Callers that need a fallback-safe lookup should call
+    /// `is_registered` first, or use `list_agents` for batch queries.
+    pub fn get_agent(env: Env, id: u64) -> Agent {
         let key = DataKey::Agent(id);
         let result: Option<Agent> = env.storage().persistent().get(&key);
-        if result.is_some() {
-            env.storage()
-                .persistent()
-                .extend_ttl(&key, LEDGER_THRESHOLD, LEDGER_BUMP);
+        match result {
+            Some(agent) => {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, LEDGER_THRESHOLD, LEDGER_BUMP);
+                agent
+            }
+            None => panic_with_error!(&env, Error::AgentNotFound),
         }
-        result
     }
 
     /// Returns true if `owner` currently has a registered agent. Equivalent
