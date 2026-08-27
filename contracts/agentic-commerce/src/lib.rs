@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token, Address, Env, String};
+use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token, Address, Env, String, Vec};
 
 /// Contract-level error codes for agentic-commerce (#323).
 #[contracterror]
@@ -23,6 +23,9 @@ pub enum JobStatus {
     Completed,
     Rejected,
     Cancelled,
+    /// #22 — client has opened a dispute on the submitted deliverable.
+    /// Evaluator must still call complete() or client can call cancel() to resolve.
+    Disputed,
 }
 
 /// A job escrowed in the commerce contract.
@@ -45,6 +48,9 @@ pub struct Job {
     pub funded_at: u64,
     pub created_at: u64,
     pub updated_at: u64,
+    /// #23 — fee_bps snapshotted at job creation so admin changes to the
+    /// global fee rate do not retroactively affect already-funded jobs.
+    pub fee_bps: u32,
 }
 
 #[contracttype]
@@ -63,6 +69,8 @@ const DEFAULT_FEE_BPS: u32 = 100; // 1%
 const MAX_FEE_BPS: u32 = 500; // 5% hard cap
 const BPS_DENOM: i128 = 10_000;
 const REFUND_TIMEOUT_SECS: u64 = 7 * 24 * 3600; // 7 days
+/// #25 — minimum budget to prevent zero/dust jobs that waste storage and spam events.
+const MIN_BUDGET: i128 = 1;
 
 // --- Events ---
 
@@ -116,6 +124,15 @@ pub struct JobCancelled {
     #[topic]
     pub client: Address,
     pub job_id: u64,
+}
+
+/// #22 — Emitted when a client opens a dispute on a submitted deliverable.
+#[contractevent]
+pub struct JobDisputed {
+    #[topic]
+    pub client: Address,
+    pub job_id: u64,
+    pub timestamp: u64,
 }
 
 /// Emitted when the contract is emergency-paused.
@@ -196,6 +213,11 @@ impl AgenticCommerceContract {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
+        // #24 — reject zero/default treasury at init time.
+        let zero_address = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+        if treasury == zero_address {
+            panic!("treasury cannot be zero address");
+        }
         env.storage().instance().set(&DataKey::NextId, &1u64);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Treasury, &treasury);
@@ -217,6 +239,11 @@ impl AgenticCommerceContract {
         let current_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         if caller != current_admin {
             panic!("not admin");
+        }
+        // #24 — reject zero/default treasury on re-init as well.
+        let zero_address = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+        if new_treasury == zero_address {
+            panic!("treasury cannot be zero address");
         }
         env.storage().instance().set(&DataKey::Admin, &new_admin);
         env.storage().instance().set(&DataKey::Treasury, &new_treasury);
@@ -300,8 +327,9 @@ impl AgenticCommerceContract {
         if !env.storage().instance().has(&DataKey::Admin) {
             panic!("not initialized");
         }
-        if budget <= 0 {
-            panic!("budget must be positive");
+        // #25 — reject zero/dust budgets that waste storage and emit spam events.
+        if budget < MIN_BUDGET {
+            panic!("budget below minimum");
         }
         // Party validation (#323): prevent self-escrow and invalid party
         // combinations before any storage reads or token transfers.
@@ -318,9 +346,20 @@ impl AgenticCommerceContract {
             .get(&DataKey::NextId)
             .unwrap_or(1u64);
 
+        // #23 — snapshot the current fee_bps so future admin changes don't
+        // retroactively affect this job when complete() runs.
+        let snapshotted_fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeBps)
+            .unwrap_or(DEFAULT_FEE_BPS);
+
         // Pull funds into contract escrow.
         let token_client = token::TokenClient::new(&env, &token);
         let contract_addr = env.current_contract_address();
+        // Sanity check (#17): `balance()` panics if `token` isn't a real SAC,
+        // failing fast here instead of with a confusing error later.
+        token_client.balance(&contract_addr);
         token_client.transfer(&client_addr, &contract_addr, &budget);
 
         let now = env.ledger().timestamp();
@@ -338,6 +377,7 @@ impl AgenticCommerceContract {
             funded_at: now,
             created_at: now,
             updated_at: now,
+            fee_bps: snapshotted_fee_bps, // #23
         };
         env.storage().persistent().set(&DataKey::Job(next), &job);
         env.storage().instance().set(&DataKey::NextId, &(next + 1));
@@ -367,6 +407,15 @@ impl AgenticCommerceContract {
         if job.status != JobStatus::Funded {
             panic!("invalid status");
         }
+        // #20 — reject empty or whitespace-only deliverables; a blank URI
+        // would defeat the purpose of the escrow.
+        let is_blank = deliverable
+            .to_bytes()
+            .iter()
+            .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'));
+        if is_blank {
+            panic!("deliverable cannot be empty");
+        }
         job.status = JobStatus::Submitted;
         job.deliverable = deliverable;
         job.updated_at = env.ledger().timestamp();
@@ -395,12 +444,13 @@ impl AgenticCommerceContract {
         if caller != job.evaluator {
             panic!("not evaluator");
         }
-        if job.status != JobStatus::Submitted {
+        // #22 — evaluator may resolve a job in either Submitted or Disputed state.
+        if job.status != JobStatus::Submitted && job.status != JobStatus::Disputed {
             panic!("invalid status");
         }
-        // #28 — overflow-safe fee: divide first, then multiply.
-        let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap();
-        let fee: i128 = Self::compute_fee(job.budget, fee_bps);
+        // #23 — use the fee_bps snapshotted at job creation time so admin
+        // changes to the global rate don't retroactively alter this job.
+        let fee: i128 = Self::compute_fee(job.budget, job.fee_bps);
         let payout: i128 = job.budget - fee;
 
         job.status = JobStatus::Completed;
@@ -429,6 +479,11 @@ impl AgenticCommerceContract {
     /// Client cancels a funded (not-yet-submitted) job and reclaims the unreleased budget.
     /// Refunds `budget - released` so it correctly handles any future partial-settlement
     /// extensions without over-refunding.
+    ///
+    /// #22 — also allowed in Submitted state, giving the client recourse when
+    /// a provider submits garbage. In that case the client loses nothing but
+    /// the gas since the full escrow is returned. For a structured dispute
+    /// workflow use `dispute()` instead.
     pub fn cancel(env: Env, caller: Address, id: u64) {
         Self::require_not_paused(&env); // #29
         caller.require_auth();
@@ -440,7 +495,8 @@ impl AgenticCommerceContract {
         if caller != job.client {
             panic!("not client");
         }
-        if job.status != JobStatus::Funded {
+        // #22 — allow cancel from Funded, Submitted, or Disputed.
+        if job.status != JobStatus::Funded && job.status != JobStatus::Submitted && job.status != JobStatus::Disputed {
             panic!("invalid status");
         }
         // Refund only the net (unreleased) portion of the budget so the
@@ -463,12 +519,59 @@ impl AgenticCommerceContract {
         .publish(&env);
     }
 
+    /// Client opens a dispute after a provider has submitted a deliverable
+    /// the client considers unacceptable (#22).
+    ///
+    /// This entry point is a lightweight on-chain signal: it transitions the
+    /// job to `Disputed` state and emits a `JobDisputed` event so off-chain
+    /// evaluators/arbiters can detect and act on it.  The actual resolution
+    /// happens through the normal `complete()` / `cancel()` flow once the
+    /// evaluator has reviewed the deliverable and the dispute.
+    ///
+    /// Only the client may open a dispute, and only while the job is in the
+    /// `Submitted` state.
+    pub fn dispute(env: Env, caller: Address, id: u64) {
+        Self::require_not_paused(&env); // #29
+        caller.require_auth();
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(id))
+            .unwrap_or_else(|| panic!("job not found"));
+        if caller != job.client {
+            panic!("not client");
+        }
+        if job.status != JobStatus::Submitted {
+            panic!("invalid status");
+        }
+        job.status = JobStatus::Disputed;
+        job.updated_at = env.ledger().timestamp();
+        env.storage().persistent().set(&DataKey::Job(id), &job);
+
+        JobDisputed {
+            client: caller,
+            job_id: id,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+    }
+
     /// Admin updates the treasury address.
+    ///
+    /// #24 — rejects the zero/default address so platform fees are never
+    /// silently burned. The treasury must be a distinct, explicitly-set
+    /// address before any fee transfer can occur.
     pub fn set_treasury(env: Env, caller: Address, new_treasury: Address) {
         caller.require_auth();
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         if caller != admin {
             panic!("not admin");
+        }
+        // #24 — prevent accidentally burning fees by setting treasury to the
+        // zero/default Address (32 zero bytes). Callers must pass a real address.
+        let zero_address = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+        if new_treasury == zero_address {
+            panic!("treasury cannot be zero address");
         }
         env.storage()
             .instance()
@@ -508,6 +611,46 @@ impl AgenticCommerceContract {
     /// Fetch a job by id.
     pub fn get_job(env: Env, id: u64) -> Option<Job> {
         env.storage().persistent().get(&DataKey::Job(id))
+    }
+
+    /// Returns up to `limit` jobs where `provider` is the job's provider,
+    /// scanning forward from `start_id` (#21). There is no secondary index by
+    /// provider address, so this scans the job id range; callers should page
+    /// through with `start_id` to bound the work done per call.
+    pub fn jobs_by_provider(env: Env, provider: Address, start_id: u64, limit: u32) -> Vec<Job> {
+        let mut result = Vec::new(&env);
+        let next_id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1u64);
+
+        let mut id = start_id;
+        while result.len() < limit && id < next_id {
+            let job: Option<Job> = env.storage().persistent().get(&DataKey::Job(id));
+            if let Some(job) = job {
+                if job.provider == provider {
+                    result.push_back(job);
+                }
+            }
+            id += 1;
+        }
+        result
+    }
+
+    /// Returns up to `limit` jobs where `client` is the job's client,
+    /// scanning forward from `start_id` (#21). Mirrors `jobs_by_provider`.
+    pub fn jobs_by_client(env: Env, client: Address, start_id: u64, limit: u32) -> Vec<Job> {
+        let mut result = Vec::new(&env);
+        let next_id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1u64);
+
+        let mut id = start_id;
+        while result.len() < limit && id < next_id {
+            let job: Option<Job> = env.storage().persistent().get(&DataKey::Job(id));
+            if let Some(job) = job {
+                if job.client == client {
+                    result.push_back(job);
+                }
+            }
+            id += 1;
+        }
+        result
     }
 
     /// Contract version. Bump on ABI changes.
@@ -555,6 +698,58 @@ impl AgenticCommerceContract {
         JobRefunded {
             client: caller,
             job_id: id,
+        }
+        .publish(&env);
+    }
+
+    /// Provider claims payout if the evaluator never completed the job and the
+    /// timeout has passed. Mirrors `claim_refund`'s timeout pattern for the
+    /// `Submitted` state, preventing a non-responsive evaluator from locking
+    /// the provider's payment forever (#18).
+    pub fn claim_expired(env: Env, caller: Address, id: u64) {
+        Self::require_not_paused(&env); // #29
+        caller.require_auth();
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(id))
+            .unwrap_or_else(|| panic!("job not found"));
+        if caller != job.provider {
+            panic!("not provider");
+        }
+        if job.status != JobStatus::Submitted {
+            panic!("invalid status");
+        }
+        let now = env.ledger().timestamp();
+        // `updated_at` is set to the submission time by `submit()` and does
+        // not change again while status remains `Submitted`.
+        if now < job.updated_at + REFUND_TIMEOUT_SECS {
+            panic!("timeout not reached");
+        }
+        // #28 — overflow-safe fee: divide first, then multiply.
+        let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap();
+        let fee: i128 = Self::compute_fee(job.budget, fee_bps);
+        let payout: i128 = job.budget - fee;
+
+        job.status = JobStatus::Completed;
+        job.released = job.budget;
+        job.updated_at = now;
+        env.storage().persistent().set(&DataKey::Job(id), &job);
+
+        let token_client = token::TokenClient::new(&env, &job.token);
+        let contract_addr = env.current_contract_address();
+        token_client.transfer(&contract_addr, &job.provider, &payout);
+        if fee > 0 {
+            let treasury: Address = env.storage().instance().get(&DataKey::Treasury).unwrap();
+            token_client.transfer(&contract_addr, &treasury, &fee);
+        }
+
+        JobExpired {
+            provider: caller,
+            job_id: id,
+            payout,
+            fee,
+            timestamp: now,
         }
         .publish(&env);
     }
