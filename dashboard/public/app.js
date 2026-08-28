@@ -13,6 +13,10 @@
     history: null,
     loading: { stats: false, wallets: false, agents: false, jobs: false },
     jobFilter: "Active",
+    agentPage: 1,
+    agentPageSize: 24,
+    agentTotal: 0,
+    txPending: false,
   };
 
   // ── Stellar Wallets Kit integration ──
@@ -165,6 +169,7 @@
 
   /** Build unsigned tx on server, sign with Stellar Wallets Kit, submit via server */
   async function signAndSubmit(buildEndpoint, params) {
+    await ensureSession();
     // 1. Build unsigned tx on server
     var buildRes = await api(buildEndpoint, {
       method: "POST",
@@ -215,14 +220,62 @@
 
   // ── API Client ──
   async function api(path, opts = {}) {
+    const headers = opts.body ? { "Content-Type": "application/json" } : {};
+    if (window.__sessionToken) headers.Authorization = "Bearer " + window.__sessionToken;
     const res = await fetch(`/api${path}`, {
       method: opts.method || "GET",
-      headers: opts.body ? { "Content-Type": "application/json" } : {},
+      headers: headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Request failed");
     return data;
+  }
+
+  var authPromise = null;
+  async function ensureSession() {
+    if (!wallet.connected || !wallet.publicKey || window.__sessionToken) return;
+    if (wallet.network === "mainnet") {
+      throw new Error("Dashboard authentication is disabled for Mainnet wallets");
+    }
+    if (authPromise) return authPromise;
+    authPromise = (async function () {
+      const challenge = await api(
+        "/auth/challenge?publicKey=" + encodeURIComponent(wallet.publicKey),
+      );
+      const signed = await signWalletTransaction(challenge.xdr);
+      const verified = await api("/auth/verify", {
+        method: "POST",
+        body: { publicKey: wallet.publicKey, nonce: challenge.nonce, signedXdr: signed },
+      });
+      window.__sessionToken = verified.token;
+    })();
+    try {
+      await authPromise;
+    } finally {
+      authPromise = null;
+    }
+  }
+
+  async function signWalletTransaction(txXdr) {
+    const freighter = window.freighterApi || window.freighter;
+    if (freighter && typeof freighter.signTransaction === "function") {
+      const result = await freighter.signTransaction(txXdr);
+      return (
+        result.signedTransaction ||
+        result.signedTx ||
+        result.signedTxXdr ||
+        result.signedXdr ||
+        result
+      );
+    }
+    if (!swkReady) throw new Error("Stellar Wallet Kit not loaded");
+    const addressResult = await StellarWalletsKit.getAddress();
+    const result = await StellarWalletsKit.signTransaction(txXdr, {
+      networkPassphrase: "Test SDF Network ; September 2015",
+      address: addressResult.address,
+    });
+    return result.signedTxXdr;
   }
 
   // ── Helpers ──
@@ -352,19 +405,25 @@
     }
     state.loading.wallets = false;
   }
-  async function loadAgents() {
+  async function loadAgents(page = state.agentPage, paged = true) {
     state.loading.agents = true;
     try {
-      state.agents = await api("/agents");
+      const data = await api(
+        paged ? "/agents?page=" + page + "&pageSize=" + state.agentPageSize : "/agents",
+      );
+      state.agents = data.items || data;
+      state.agentPage = data.page || page;
+      state.agentTotal = data.total || state.agents.length;
     } catch (e) {
       console.error(e);
     }
     state.loading.agents = false;
   }
-  async function loadJobs() {
+  async function loadJobs(status) {
     state.loading.jobs = true;
     try {
-      state.jobs = await api("/jobs");
+      const query = status ? "?status=" + encodeURIComponent(status) : "";
+      state.jobs = await api("/jobs" + query);
     } catch (e) {
       console.error(e);
     }
@@ -593,7 +652,7 @@
         '<button class="btn btn-primary" onclick="window.__showCreateJob()">+ Create Job</button></div>' +
         skeletonList(4),
     );
-    await loadJobs();
+    await loadJobs("Active");
     renderJobList();
   }
 
@@ -783,6 +842,26 @@
       cards += "</div>";
     }
 
+    const totalPages = Math.max(1, Math.ceil(state.agentTotal / state.agentPageSize));
+    if (totalPages > 1) {
+      cards +=
+        '<div class="filter-tabs" style="margin-top:20px">' +
+        '<button class="filter-tab" ' +
+        (state.agentPage === 1 ? "disabled" : "") +
+        ' onclick="window.__changeAgentPage(' +
+        (state.agentPage - 1) +
+        ')">Previous</button>' +
+        '<span class="filter-tab active">Page ' +
+        state.agentPage +
+        " of " +
+        totalPages +
+        '</span><button class="filter-tab" ' +
+        (state.agentPage >= totalPages ? "disabled" : "") +
+        ' onclick="window.__changeAgentPage(' +
+        (state.agentPage + 1) +
+        ')">Next</button></div>';
+    }
+
     setPage(
       '<div class="section-header"><div><div class="section-title">Agents</div><div class="page-subtitle" style="margin-top:2px">On-chain identity registry for AI agents</div></div>' +
         '<button class="btn btn-primary" onclick="window.__showRegisterAgent()">+ Register Agent</button></div>' +
@@ -810,7 +889,7 @@
         skeletonList(6),
     );
 
-    await Promise.all([loadJobs(), loadAgents()]);
+    await Promise.all([loadJobs(), loadAgents(1, false)]);
 
     var jobs = state.jobs || [];
     var agents = state.agents || [];
@@ -994,7 +1073,17 @@
 
   window.__filterJobs = function (filter) {
     state.jobFilter = filter;
-    renderJobList();
+    loadJobs(filter === "All" ? undefined : filter)
+      .then(renderJobList)
+      .catch(function (e) {
+        toast(e.message, "error");
+      });
+  };
+
+  window.__changeAgentPage = async function (page) {
+    if (page < 1) return;
+    await loadAgents(page);
+    renderAgents();
   };
 
   window.__showCreateJob = function () {
@@ -1021,6 +1110,8 @@
   };
 
   window.__doCreateJob = async function () {
+    if (state.txPending) return;
+    state.txPending = true;
     const description = document.getElementById("cj-desc").value;
     const budget = document.getElementById("cj-budget").value;
     const walletEl = document.getElementById("cj-wallet");
@@ -1049,10 +1140,14 @@
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
   window.__submitJob = async function (id) {
+    if (state.txPending) return;
+    state.txPending = true;
     showTxOverlay("Submitting work...");
     try {
       if (wallet.connected) {
@@ -1073,10 +1168,14 @@
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
   window.__completeJob = async function (id) {
+    if (state.txPending) return;
+    state.txPending = true;
     showTxOverlay("Completing job & releasing funds...");
     try {
       if (wallet.connected) {
@@ -1091,13 +1190,17 @@
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
   window.__cancelJob = async function (id) {
+    if (state.txPending) return;
     const confirmed = window.confirm("Cancel this job and refund the escrowed funds?");
     if (!confirmed) return;
 
+    state.txPending = true;
     showTxOverlay("Cancelling job & refunding...");
     try {
       if (wallet.connected) {
@@ -1112,6 +1215,8 @@
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
@@ -1135,6 +1240,8 @@
   };
 
   window.__doRegister = async function () {
+    if (state.txPending) return;
+    state.txPending = true;
     const uri = document.getElementById("ra-uri").value;
     const walletEl = document.getElementById("ra-wallet");
     const walletVal = walletEl ? walletEl.value : "buyer";
@@ -1159,6 +1266,8 @@
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
@@ -1244,7 +1353,7 @@
       } else if (route === "/history") {
         var oldJobs3 = JSON.stringify(state.jobs);
         var oldAgents3 = JSON.stringify(state.agents);
-        await Promise.all([loadJobs(), loadAgents()]);
+        await Promise.all([loadJobs(), loadAgents(1, false)]);
         if (
           JSON.stringify(state.jobs) !== oldJobs3 ||
           JSON.stringify(state.agents) !== oldAgents3
