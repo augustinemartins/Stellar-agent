@@ -1,4 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from "express";
+import cors from "cors";
 import helmet from "helmet";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -61,12 +62,11 @@ const server = new rpc.Server(cfg.rpcUrl, {
 const identityContract = new Contract(cfg.identityContract);
 const commerceContract = new Contract(cfg.commerceContract);
 
-const allowedOrigins = new Set(
-  (process.env.DASHBOARD_ORIGINS ?? "http://localhost:3000,http://127.0.0.1:3000")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean),
-);
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  process.env.ALLOWED_ORIGIN,
+].filter(Boolean) as string[];
 
 function isStellarAddress(value: string): boolean {
   if (typeof value !== "string") return false;
@@ -174,27 +174,20 @@ function handleRouteError(err: unknown, res: Response): void {
   res.status(500).json({ error: (err as Error).message });
 }
 
-function corsOriginHandler(req: Request, res: Response, next: NextFunction) {
-  const origin = req.headers.origin;
-  if (!origin) return next();
-  if (!allowedOrigins.has(origin)) {
-    return res.status(403).json({ error: "Origin not allowed" });
-  }
-  res.setHeader("Access-Control-Allow-Origin", origin);
-  res.setHeader("Vary", "Origin");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  return next();
-}
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+  }),
+);
 
-app.use(corsOriginHandler);
-app.options("*", (_req, res) => {
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  res.sendStatus(204);
-});
-
-app.get("/health", (_req, res) => res.json({ status: "ok" }));
+app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.get("/healthz", (_req, res) => res.send("ok"));
 
 // --- Authentication Endpoints ---

@@ -39,6 +39,7 @@ npm-debug.log*
 # Build outputs
 build/
 out/
+.next/
 
 # Mutation testing results
 mutation-results-*/
