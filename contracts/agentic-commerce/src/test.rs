@@ -226,6 +226,7 @@ fn complete_splits_payout_99_1_between_provider_and_treasury() {
     let expected_event = JobCompleted {
         evaluator: buyer.clone(),
         job_id: id,
+        provider: seller.clone(),
         payout: 99_000,
         fee: 1_000,
         timestamp: env.ledger().timestamp(),
