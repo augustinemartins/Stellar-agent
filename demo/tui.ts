@@ -86,7 +86,11 @@ process.stdout.on("resize", () => {
 
 // ── TUI ───────────────────────────────────────────────────────────────────────
 
-const screen = blessed.screen({ smartCSR: true, title: "MARC Marketplace" });
+let screen: blessed.Widgets.Screen | null = null;
+let sellersBox: blessed.Widgets.BoxElement | null = null;
+let buyersBox: blessed.Widgets.BoxElement | null = null;
+let treasuryBox: blessed.Widgets.BoxElement | null = null;
+let feedBox: blessed.Widgets.Log | null = null;
 
 // All widths/heights are percentages so blessed handles reflow automatically.
 const sellersBox = blessed.box({
@@ -228,15 +232,20 @@ function feed(msg: string) {
   const ts = new Date().toTimeString().slice(0, 8);
   // Strip blessed tags for plain-text output
   const plain = msg.replace(/\{[^}]+\}/g, "");
-  if (usePlainLog) {
+  if (usePlainLog || !screen || !feedBox) {
     console.log(`[${ts}] ${plain}`);
     return;
   }
-  const cols = process.stdout.columns ?? MIN_COLS;
-  const maxLen = Math.max(40, cols - 12); // account for timestamp prefix
-  const truncated = msg.length > maxLen ? msg.slice(0, maxLen - 1) + "…" : msg;
-  feedBox.log(`{gray-fg}[${ts}]{/gray-fg} ${truncated}`);
-  screen.render();
+  try {
+    const cols = process.stdout.columns ?? MIN_COLS;
+    const maxLen = Math.max(40, cols - 12); // account for timestamp prefix
+    const truncated = msg.length > maxLen ? msg.slice(0, maxLen - 1) + "…" : msg;
+    feedBox.log(`{gray-fg}[${ts}]{/gray-fg} ${truncated}`);
+    screen.render();
+  } catch {
+    usePlainLog = true;
+    console.log(`[${ts}] ${plain}`);
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
