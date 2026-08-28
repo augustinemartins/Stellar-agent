@@ -147,6 +147,16 @@ function getRequestKey(req: any) {
   );
 }
 
+const API_KEY = process.env.REGISTRY_API_KEY || "dev-registry-key";
+
+function requireApiKey(req: any, res: any, next: any) {
+  const key = req.headers["x-api-key"];
+  if (!key || key !== API_KEY) {
+    return res.status(401).json({ error: "Unauthorized: valid API key required" });
+  }
+  next();
+}
+
 function requireRegistryAuth(req: any, res: any, next: any) {
   if (!REGISTRY_API_KEY) return next();
   const auth = String(req.headers.authorization ?? "").trim();
@@ -210,7 +220,7 @@ setInterval(() => {
   }
 }, HEARTBEAT_INTERVAL_MS);
 
-app.post("/heartbeat", requireRegistryAuth, (req, res) => {
+app.post("/heartbeat", requireApiKey, requireRegistryAuth, (req, res) => {
   const { agentId } = req.body;
   if (!agentId) {
     return res.status(400).json({ error: "missing agentId" });

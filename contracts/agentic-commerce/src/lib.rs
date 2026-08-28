@@ -14,16 +14,40 @@ pub enum Error {
 }
 
 /// Lifecycle states for a job escrow.
+///
+/// Soroban encodes enum variants as sequential `u32` discriminants in XDR and
+/// in the value returned by `get_job()`. The mapping is:
+///
+/// | Variant     | u32 |
+/// |-------------|-----|
+/// | Open        | 0   |
+/// | Funded      | 1   |
+/// | Submitted   | 2   |
+/// | Completed   | 3   |
+/// | Rejected    | 4   |
+/// | Cancelled   | 5   |
+/// | Disputed    | 6   |
+///
+/// SDK consumers that receive the raw XDR integer should use this table to
+/// map the value to a human-readable status string. Future variants will be
+/// appended at the end and will receive the next sequential u32.
 #[contracttype]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum JobStatus {
+    /// 0 — created but not yet funded (reserved for future use; jobs currently
+    /// start directly in `Funded` after `create_job` pulls the escrow deposit).
     Open,
+    /// 1 — escrow deposit received; waiting for provider to submit deliverable.
     Funded,
+    /// 2 — provider has submitted a deliverable URI; waiting for evaluator approval.
     Submitted,
+    /// 3 — evaluator approved; provider and treasury have been paid out.
     Completed,
+    /// 4 — evaluator rejected the deliverable (reserved; not yet used in current state machine).
     Rejected,
+    /// 5 — job was cancelled by the client or timed out; budget refunded.
     Cancelled,
-    /// #22 — client has opened a dispute on the submitted deliverable.
+    /// 6 — client has opened a dispute on the submitted deliverable (#22).
     /// Evaluator must still call complete() or client can call cancel() to resolve.
     Disputed,
 }
@@ -100,11 +124,17 @@ pub struct JobSubmitted {
 }
 
 /// Emitted when a job completes and funds are released.
+///
+/// `provider` is included so off-chain indexers and analytics can attribute
+/// the payout to the correct recipient without a separate `get_job` lookup
+/// (#27).
 #[contractevent]
 pub struct JobCompleted {
     #[topic]
     pub evaluator: Address,
     pub job_id: u64,
+    /// The provider address that received the payout.
+    pub provider: Address,
     pub payout: i128,
     pub fee: i128,
     pub timestamp: u64,
@@ -469,6 +499,7 @@ impl AgenticCommerceContract {
         JobCompleted {
             evaluator: caller,
             job_id: id,
+            provider: job.provider.clone(),
             payout,
             fee,
             timestamp: env.ledger().timestamp(),

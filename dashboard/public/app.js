@@ -13,6 +13,10 @@
     history: null,
     loading: { stats: false, wallets: false, agents: false, jobs: false },
     jobFilter: "Active",
+    agentPage: 1,
+    agentPageSize: 24,
+    agentTotal: 0,
+    txPending: false,
   };
 
   // ── Stellar Wallets Kit integration ──
@@ -40,12 +44,21 @@
     if (btnWrapper) StellarWalletsKit.createButton(btnWrapper);
     // Listen for wallet state changes
     StellarWalletsKit.on(KitEventType.STATE_UPDATED, function (event) {
-      var addr = event.payload && event.payload.address;
-      if (addr && addr.length > 10) {
-        wallet.connected = true;
-        wallet.publicKey = addr;
-        updateWalletUI();
+      var addr = event.payload && (event.payload.address || (event.payload.accounts && event.payload.accounts[0] && event.payload.accounts[0].address));
+      if (!addr || addr.length <= 10) {
+        // Fallback: fetch current address from SWK
+        StellarWalletsKit.getAddress()
+          .then(function (res) {
+            wallet.connected = true;
+            wallet.publicKey = res.address;
+            updateWalletUI();
+          })
+          .catch(function () {});
+        return;
       }
+      wallet.connected = true;
+      wallet.publicKey = addr;
+      updateWalletUI();
     });
     swkReady = true;
   }
@@ -54,33 +67,54 @@
   async function detectFreighter() {
     try {
       const api = window.freighterApi || window.freighter;
-      if (api && typeof api.getPublicKey === "function") {
-        const pk = await api.getPublicKey();
-        let net = null;
-        if (typeof api.getNetwork === "function") {
-          try {
-            const n = await api.getNetwork();
-            // freighter may return 'TESTNET'|'PUBLIC' or a passphrase string
-            if (String(n).toLowerCase().includes("test")) net = "testnet";
-            else if (
-              String(n).toLowerCase().includes("pub") ||
-              String(n).toLowerCase().includes("main")
-            )
-              net = "mainnet";
-          } catch (e) {}
-        }
-        wallet.connected = true;
-        wallet.publicKey = pk;
-        wallet.network = net || null;
-        updateWalletUI();
+      if (!api || typeof api.getPublicKey !== "function") return;
+      const pk = await api.getPublicKey();
+      if (!pk || pk.length <= 10) return;
+      let net = null;
+      if (typeof api.getNetwork === "function") {
+        try {
+          const n = await api.getNetwork();
+          if (String(n).toLowerCase().includes("test")) net = "testnet";
+          else if (
+            String(n).toLowerCase().includes("pub") ||
+            String(n).toLowerCase().includes("main")
+          )
+            net = "mainnet";
+        } catch (e) {}
+      }
+      wallet.connected = true;
+      wallet.publicKey = pk;
+      wallet.network = net;
+      updateWalletUI();
+      if (typeof api.onNetworkChanged === "function") {
+        api.onNetworkChanged(function (n) {
+          let updatedNet = null;
+          if (String(n).toLowerCase().includes("test")) updatedNet = "testnet";
+          else if (
+            String(n).toLowerCase().includes("pub") ||
+            String(n).toLowerCase().includes("main")
+          )
+            updatedNet = "mainnet";
+          wallet.network = updatedNet;
+          updateWalletUI();
+        });
       }
     } catch (e) {
       // ignore
     }
   }
 
-  // Try detect Freighter immediately
-  detectFreighter();
+  // Retry Freighter detection a few times on load
+  async function retryDetectFreighter(attempts) {
+    if (attempts <= 0) return;
+    await detectFreighter();
+    if (!wallet.connected) {
+      setTimeout(function () {
+        retryDetectFreighter(attempts - 1);
+      }, 1000);
+    }
+  }
+  retryDetectFreighter(3);
 
   function disconnectWallet() {
     wallet.connected = false;
@@ -165,6 +199,7 @@
 
   /** Build unsigned tx on server, sign with Stellar Wallets Kit, submit via server */
   async function signAndSubmit(buildEndpoint, params) {
+    await ensureSession();
     // 1. Build unsigned tx on server
     var buildRes = await api(buildEndpoint, {
       method: "POST",
@@ -215,14 +250,62 @@
 
   // ── API Client ──
   async function api(path, opts = {}) {
+    const headers = opts.body ? { "Content-Type": "application/json" } : {};
+    if (window.__sessionToken) headers.Authorization = "Bearer " + window.__sessionToken;
     const res = await fetch(`/api${path}`, {
       method: opts.method || "GET",
-      headers: opts.body ? { "Content-Type": "application/json" } : {},
+      headers: headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Request failed");
     return data;
+  }
+
+  var authPromise = null;
+  async function ensureSession() {
+    if (!wallet.connected || !wallet.publicKey || window.__sessionToken) return;
+    if (wallet.network === "mainnet") {
+      throw new Error("Dashboard authentication is disabled for Mainnet wallets");
+    }
+    if (authPromise) return authPromise;
+    authPromise = (async function () {
+      const challenge = await api(
+        "/auth/challenge?publicKey=" + encodeURIComponent(wallet.publicKey),
+      );
+      const signed = await signWalletTransaction(challenge.xdr);
+      const verified = await api("/auth/verify", {
+        method: "POST",
+        body: { publicKey: wallet.publicKey, nonce: challenge.nonce, signedXdr: signed },
+      });
+      window.__sessionToken = verified.token;
+    })();
+    try {
+      await authPromise;
+    } finally {
+      authPromise = null;
+    }
+  }
+
+  async function signWalletTransaction(txXdr) {
+    const freighter = window.freighterApi || window.freighter;
+    if (freighter && typeof freighter.signTransaction === "function") {
+      const result = await freighter.signTransaction(txXdr);
+      return (
+        result.signedTransaction ||
+        result.signedTx ||
+        result.signedTxXdr ||
+        result.signedXdr ||
+        result
+      );
+    }
+    if (!swkReady) throw new Error("Stellar Wallet Kit not loaded");
+    const addressResult = await StellarWalletsKit.getAddress();
+    const result = await StellarWalletsKit.signTransaction(txXdr, {
+      networkPassphrase: "Test SDF Network ; September 2015",
+      address: addressResult.address,
+    });
+    return result.signedTxXdr;
   }
 
   // ── Helpers ──
@@ -258,8 +341,12 @@
     const el = document.createElement("div");
     el.className = "toast " + type;
     el.textContent = msg;
+    el.title = "Click to dismiss";
+    el.addEventListener("click", function () {
+      el.remove();
+    });
     document.getElementById("toasts").appendChild(el);
-    const autoDismissDuration = duration || (type === "error" ? 8000 : 3000);
+    const autoDismissDuration = duration || (type === "error" ? 30000 : 3000);
     setTimeout(() => el.remove(), autoDismissDuration);
   }
 
@@ -352,19 +439,25 @@
     }
     state.loading.wallets = false;
   }
-  async function loadAgents() {
+  async function loadAgents(page = state.agentPage, paged = true) {
     state.loading.agents = true;
     try {
-      state.agents = await api("/agents");
+      const data = await api(
+        paged ? "/agents?page=" + page + "&pageSize=" + state.agentPageSize : "/agents",
+      );
+      state.agents = data.items || data;
+      state.agentPage = data.page || page;
+      state.agentTotal = data.total || state.agents.length;
     } catch (e) {
       console.error(e);
     }
     state.loading.agents = false;
   }
-  async function loadJobs() {
+  async function loadJobs(status) {
     state.loading.jobs = true;
     try {
-      state.jobs = await api("/jobs");
+      const query = status ? "?status=" + encodeURIComponent(status) : "";
+      state.jobs = await api("/jobs" + query);
     } catch (e) {
       console.error(e);
     }
@@ -593,7 +686,7 @@
         '<button class="btn btn-primary" onclick="window.__showCreateJob()">+ Create Job</button></div>' +
         skeletonList(4),
     );
-    await loadJobs();
+    await loadJobs("Active");
     renderJobList();
   }
 
@@ -783,6 +876,26 @@
       cards += "</div>";
     }
 
+    const totalPages = Math.max(1, Math.ceil(state.agentTotal / state.agentPageSize));
+    if (totalPages > 1) {
+      cards +=
+        '<div class="filter-tabs" style="margin-top:20px">' +
+        '<button class="filter-tab" ' +
+        (state.agentPage === 1 ? "disabled" : "") +
+        ' onclick="window.__changeAgentPage(' +
+        (state.agentPage - 1) +
+        ')">Previous</button>' +
+        '<span class="filter-tab active">Page ' +
+        state.agentPage +
+        " of " +
+        totalPages +
+        '</span><button class="filter-tab" ' +
+        (state.agentPage >= totalPages ? "disabled" : "") +
+        ' onclick="window.__changeAgentPage(' +
+        (state.agentPage + 1) +
+        ')">Next</button></div>';
+    }
+
     setPage(
       '<div class="section-header"><div><div class="section-title">Agents</div><div class="page-subtitle" style="margin-top:2px">On-chain identity registry for AI agents</div></div>' +
         '<button class="btn btn-primary" onclick="window.__showRegisterAgent()">+ Register Agent</button></div>' +
@@ -810,7 +923,7 @@
         skeletonList(6),
     );
 
-    await Promise.all([loadJobs(), loadAgents()]);
+    await Promise.all([loadJobs(), loadAgents(1, false)]);
 
     var jobs = state.jobs || [];
     var agents = state.agents || [];
@@ -994,7 +1107,17 @@
 
   window.__filterJobs = function (filter) {
     state.jobFilter = filter;
-    renderJobList();
+    loadJobs(filter === "All" ? undefined : filter)
+      .then(renderJobList)
+      .catch(function (e) {
+        toast(e.message, "error");
+      });
+  };
+
+  window.__changeAgentPage = async function (page) {
+    if (page < 1) return;
+    await loadAgents(page);
+    renderAgents();
   };
 
   window.__showCreateJob = function () {
@@ -1021,6 +1144,8 @@
   };
 
   window.__doCreateJob = async function () {
+    if (state.txPending) return;
+    state.txPending = true;
     const description = document.getElementById("cj-desc").value;
     const budget = document.getElementById("cj-budget").value;
     const walletEl = document.getElementById("cj-wallet");
@@ -1049,10 +1174,14 @@
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
   window.__submitJob = async function (id) {
+    if (state.txPending) return;
+    state.txPending = true;
     showTxOverlay("Submitting work...");
     try {
       if (wallet.connected) {
@@ -1073,10 +1202,14 @@
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
   window.__completeJob = async function (id) {
+    if (state.txPending) return;
+    state.txPending = true;
     showTxOverlay("Completing job & releasing funds...");
     try {
       if (wallet.connected) {
@@ -1091,13 +1224,17 @@
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
   window.__cancelJob = async function (id) {
+    if (state.txPending) return;
     const confirmed = window.confirm("Cancel this job and refund the escrowed funds?");
     if (!confirmed) return;
 
+    state.txPending = true;
     showTxOverlay("Cancelling job & refunding...");
     try {
       if (wallet.connected) {
@@ -1112,6 +1249,8 @@
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
@@ -1135,6 +1274,8 @@
   };
 
   window.__doRegister = async function () {
+    if (state.txPending) return;
+    state.txPending = true;
     const uri = document.getElementById("ra-uri").value;
     const walletEl = document.getElementById("ra-wallet");
     const walletVal = walletEl ? walletEl.value : "buyer";
@@ -1142,6 +1283,7 @@
     if (overlay) overlay.remove();
     showTxOverlay("Registering agent on Stellar...");
     try {
+      let agentId = null;
       if (wallet.connected) {
         const res = await signAndSubmit("/agents/register", { wallet: "freighter", uri: uri });
         hideTxOverlay();
@@ -1152,13 +1294,29 @@
           body: { wallet: walletVal, uri: uri },
         });
         hideTxOverlay();
+        agentId = res.agentId;
         toast("Agent #" + res.agentId + " registered!");
       }
+      await new Promise((r) => setTimeout(r, 1500));
       await loadAgents();
+      if (agentId !== null && state.agents) {
+        const found = state.agents.find(function (a) { return String(a.id) === String(agentId); });
+        if (!found && wallet.connected) {
+          state.agents = state.agents.concat([
+            {
+              id: Number(agentId),
+              owner: wallet.publicKey,
+              uri: uri,
+            },
+          ]);
+        }
+      }
       renderAgents();
     } catch (e) {
       hideTxOverlay();
       toast(e.message, "error");
+    } finally {
+      state.txPending = false;
     }
   };
 
@@ -1244,7 +1402,7 @@
       } else if (route === "/history") {
         var oldJobs3 = JSON.stringify(state.jobs);
         var oldAgents3 = JSON.stringify(state.agents);
-        await Promise.all([loadJobs(), loadAgents()]);
+        await Promise.all([loadJobs(), loadAgents(1, false)]);
         if (
           JSON.stringify(state.jobs) !== oldJobs3 ||
           JSON.stringify(state.agents) !== oldAgents3

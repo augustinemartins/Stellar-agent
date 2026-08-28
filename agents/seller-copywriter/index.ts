@@ -45,7 +45,21 @@ const limiter = rateLimit({
 
 app.post("/job", limiter, async (req, res) => {
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const { jobId, task, tone, audience, keywords } = req.body;
+  const {
+    jobId,
+    task,
+    tone,
+    audience,
+    keywords,
+    brandVoice,
+  }: {
+    jobId: string;
+    task: string;
+    tone?: string;
+    audience?: string;
+    keywords?: string | string[];
+    brandVoice?: Record<string, unknown>;
+  } = req.body;
 
   console.log(
     `[${AGENT_ID}] [req:${requestId}] Incoming POST /job — headers: ${JSON.stringify({
