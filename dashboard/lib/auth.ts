@@ -63,6 +63,14 @@ export function verifyNonceSignature(publicKey: string, nonce: string, signature
       const tx = TransactionBuilder.fromXDR(signature, Networks.TESTNET);
       const keypair = Keypair.fromPublicKey(publicKey);
 
+      const hasNonceOperation = tx.operations.some(
+        (operation) =>
+          operation.type === "manageData" &&
+          operation.name === "marc-auth" &&
+          operation.value?.toString() === nonce,
+      );
+      if (!hasNonceOperation) return false;
+
       // Check if the transaction is signed by the claimed public key
       // by attempting to verify the signature
       const txHash = tx.hash();
