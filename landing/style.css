@@ -27,18 +27,18 @@
 
 /* ── Dark theme (design-system.md tokens) ── */
 [data-theme="dark"] {
-  --bg: #0A0A0A;
-  --bg-elevated: #1A1A1A;
+  --bg: #0a0a0a;
+  --bg-elevated: #1a1a1a;
   --border: #262626;
-  --text: #FAFAFA;
-  --text-muted: #9CA3AF;
-  --accent: #F97316;
-  --accent-soft: #2D1B0A;
-  --accent-strong: #FB923C;
-  --logo-yellow: #FFD60A;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
-  --shadow-card: 0 2px 8px rgba(0,0,0,0.2), 0 0 0 1px var(--border);
+  --text: #fafafa;
+  --text-muted: #9ca3af;
+  --accent: #f97316;
+  --accent-soft: #2d1b0a;
+  --accent-strong: #fb923c;
+  --logo-yellow: #ffd60a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--border);
 }
 
 /* ── Reset ── */
@@ -168,14 +168,26 @@ button {
 }
 
 /* ── Theme toggle ── */
-.theme-toggle .icon-sun { display: block; }
-.theme-toggle .icon-moon { display: none; }
-[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
-[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
+.theme-toggle .icon-sun {
+  display: block;
+}
+.theme-toggle .icon-moon {
+  display: none;
+}
+[data-theme="dark"] .theme-toggle .icon-sun {
+  display: none;
+}
+[data-theme="dark"] .theme-toggle .icon-moon {
+  display: block;
+}
 /* Prevent flash before JS runs — hide sun if user prefers dark */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .theme-toggle .icon-sun { display: none; }
-  :root:not([data-theme="light"]) .theme-toggle .icon-moon { display: block; }
+  :root:not([data-theme="light"]) .theme-toggle .icon-sun {
+    display: none;
+  }
+  :root:not([data-theme="light"]) .theme-toggle .icon-moon {
+    display: block;
+  }
 }
 
 /* ── Language switcher (issue #259) ── */
@@ -1003,7 +1015,9 @@ button {
   border-radius: var(--radius-sm);
   transition: background 0.2s;
 }
-.hamburger:hover { background: var(--accent-soft); }
+.hamburger:hover {
+  background: var(--accent-soft);
+}
 .hamburger span {
   display: block;
   width: 22px;
@@ -1038,7 +1052,7 @@ button {
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--border);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
     flex-direction: column;
     padding: 12px 24px 16px;
     gap: 2px;

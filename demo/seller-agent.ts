@@ -44,7 +44,9 @@ const servicePrice: string = getServicePrice();
 
 console.log(`\n=== SELLER DEMO ===`);
 console.log(`Seller: ${seller.publicKey()}`);
-console.log(`Default service price: ${servicePrice} (configurable via SELLER_SERVICE_PRICE env var or ?price= query param)\n`);
+console.log(
+  `Default service price: ${servicePrice} (configurable via SELLER_SERVICE_PRICE env var or ?price= query param)\n`,
+);
 
 // Step 1: Register agent identity
 const identity = new IdentityClient(cfg);

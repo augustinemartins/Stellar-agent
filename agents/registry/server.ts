@@ -49,10 +49,14 @@ function validateManifest(m: unknown): string | null {
       return `field "${field}" must be a non-empty string`;
     }
   }
+  if (!/^https?:\/\/.+/.test(obj.url as string))
+    return 'field "url" must be a valid HTTP/HTTPS URL';
   if (typeof obj.price_usdc !== "number" || obj.price_usdc <= 0)
     return 'field "price_usdc" must be a positive number';
   if (typeof obj.wallet !== "string" || !(obj.wallet as string).trim())
     return 'field "wallet" must be a non-empty string';
+  if (!/^G[A-Z2-7]{55}$/.test(obj.wallet as string))
+    return 'field "wallet" must be a valid Stellar public key (starts with G, 56 chars)';
   // `tags` is optional but must be an array of strings when present
   if (obj.tags !== undefined) {
     if (!Array.isArray(obj.tags) || obj.tags.some((t) => typeof t !== "string")) {

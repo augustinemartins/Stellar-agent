@@ -42,3 +42,21 @@ out/
 
 # Mutation testing results
 mutation-results-*/
+
+# Test snapshots
+**/__snapshots__/
+*.snap
+
+# Output directories (agent job outputs)
+agents/seller-*/output/
+
+# Current task files
+agents/seller-*/current-task.txt
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
