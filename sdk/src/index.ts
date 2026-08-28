@@ -1,4 +1,5 @@
 export * from "./types.js";
+export { formatAmount } from "./format.js";
 export { IdentityClient } from "./identity.js";
 export { CommerceClient } from "./commerce.js";
 export { marcPaywall, type MarcPaywallOptions } from "./marcPaywall.js";

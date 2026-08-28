@@ -8,6 +8,7 @@ Typed TypeScript helpers for the two MARC Soroban contracts, plus re-exports of 
 - `CommerceClient` — wrapper over `agentic_commerce` contract (create_job, submit, complete, cancel, get_job, fee_bps)
 - `marcPaywall` — Express middleware wrapping `x402-stellar`
 - `marcFetch` — client-side auto-402 wrapper
+- `formatAmount` — format atomic token amounts (7 decimals) into human-readable strings
 - `types` — `Agent`, `Job`, `JobStatus`, `MarcConfig`
 
 ## Status
