@@ -39,21 +39,28 @@ npm-debug.log*
 # Build outputs
 build/
 out/
+.next/
 
 # Mutation testing results
 mutation-results-*/
 
-# Test snapshots
-test_snapshots/
-*.snap
-
-# Coverage
+# Test snapshots & coverage
+**/__snapshots__/
+**/*.snap
 coverage/
+.nyc_output/
 *.lcov
 
-# Agent runtime artifacts
-agents/*/output/
-current-task.txt
+# Soroban / Stellar test artifacts
+/test_snapshots/
+soroban/
 
-# Explicit env overrides
-demo/.env
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Backup files
+*.bak
+*.backup
+*.old

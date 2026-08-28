@@ -330,7 +330,51 @@ The dashboard is at `http://localhost:3000/app` and has these sections:
 
 ---
 
-## Frequently Asked Questions
+## Troubleshooting & Frequently Asked Questions
+
+### Troubleshooting
+
+**Environment & setup**
+
+- **`Bad union switch: 4` when talking to the RPC** — `@stellar/stellar-sdk` 12.x and 13.x cannot parse protocol-25 XDR. Upgrade to `@stellar/stellar-sdk` 14.x+.
+- **`ERR_REQUIRE_ESM` / `require("marc-stellar-sdk")` fails** — the SDK is ESM-only by design. Use `import` and ensure your `package.json` has `"type": "module"` (or your `tsconfig.json` targets `"module": "NodeNext"`).
+- **Soroban build fails with a missing wasm target** — stellar-cli 25.x builds for `wasm32v1-none`, not the deprecated `wasm32-unknown-unknown`. Install it with `rustup target add wasm32v1-none`.
+
+**Contracts & CLI**
+
+- **`stellar contract invoke` prints `Simulation identified as read-only. Send by rerunning with --send=yes`** — expected for read-only calls (getters like `fee_bps()`, `get_agent()`). The result is still printed; ignore the hint unless you actually need to write to the ledger.
+- **`stellar contract optimize` is deprecated** — use `stellar contract build --optimize`. It builds, optimizes, and lists exported functions in one pass, writing the WASM in place (no `.optimized.wasm` suffix).
+- **Commerce contract returns `not initialized`** — `init(admin, treasury)` must be called exactly once on a freshly deployed `agentic-commerce` contract before any job can be created.
+- **`agent-identity` fails to compile after a `soroban-sdk` 27.x bump** — 27.x removed `Vec` and `panic_with_error!` from the prelude; `contracts/agent-identity/src/lib.rs` needs explicit `use soroban_sdk::{..., Vec, panic_with_error};`. (Known issue — a fix is pending in a dedicated PR.)
+
+**Testnet funds & wallets**
+
+- **Transactions fail with insufficient funds** — every Stellar transaction needs XLM for fees and reserves. Fund an account with `stellar keys generate <name> --network testnet --fund` (Friendbot) or the Stellar Laboratory account creator.
+- **Job creation fails even with XLM** — the client must also hold the token being escrowed. For demo jobs that's testnet USDC: fund the account via the Circle faucet (`https://faucet.circle.com`, Stellar Testnet). Custom classic assets additionally need a trustline and an issuer payment before the contract can move them.
+- **Friendbot says the account already exists / gets rate-limited** — Friendbot only funds new accounts. Top up existing accounts via the Laboratory or the Circle faucet instead.
+
+**x402 micropayments**
+
+- **Payments never settle / `marcFetch` keeps retrying** — the default x402 facilitator (`facilitator.stellar-x402.org`, also `facilitator.x402.org`) is unreachable. Point `X402_FACILITATOR_URL` at the OpenZeppelin testnet facilitator (`https://channels.openzeppelin.com/x402/testnet`) and set `X402_FACILITATOR_API_KEY` (generate one with `curl https://channels.openzeppelin.com/testnet/gen`).
+- **Facilitator rejects the token** — the OpenZeppelin facilitator only settles real Circle testnet USDC (`CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`). Without an explicit `token`, `marcPaywall` defaults to XLM and settlement fails — always pass `token: TESTNET.usdcToken`.
+- **402s keep coming back after payment** — the buyer's signed payment transaction itself needs XLM for its fee. If the signer keypair is unfunded, the payment never lands and the server keeps returning 402.
+- **Settlement fails intermittently on pubnet** — check that the SDK `network` setting and the facilitator URL point at the same network (testnet vs pubnet).
+
+**Escrow jobs**
+
+- **`not provider` / `not client` / `not evaluator`** — every job action is restricted to one role: only the provider can `submit`, only the evaluator can `complete`, and only the client can `cancel`. Sign with the matching keypair.
+- **Job stuck in `Funded`** — the client can only cancel _before_ the provider submits, and the evaluator's `complete` is the only way funds leave escrow. If the evaluator never approves, the funds stay locked by design — nobody, not even the admin, can release them.
+- **`Job not found`** — job IDs are sequential per contract. If you deployed your own `agentic-commerce` instance, query _that_ contract address rather than the shared testnet one.
+
+**Demo scripts**
+
+- **`Timed out waiting for: ...` in lifecycle.ts / buyer-agent.ts** — the seller agent isn't reachable. Make sure `start-agents.sh` (or `seller-agent.ts`) is running on the port in `SELLER_PORT`, and that `REGISTRY_URL` matches where the registry listens.
+- **`JOB_ID must be a non-negative integer`** — `seller-agent.ts` requires the `JOB_ID` environment variable to know which escrow job its deliverable belongs to. Set it before starting the seller.
+- **Buyer waits too long / times out too early** — buyer polling uses exponential backoff. Tune `BUYER_POLL_BASE_MS`, `BUYER_POLL_MULTIPLIER`, `BUYER_POLL_CAP_MS`, and `BUYER_POLL_MAX_ATTEMPTS`.
+
+---
+
+### Frequently Asked Questions
 
 **Q: Why Stellar and not Ethereum or Solana?**
 Stellar has 5-second finality, near-zero fees (~0.00001 XLM per tx), and native support for regulated assets like USDC. For micropayments between agents, you need fast and cheap — Stellar delivers both. The x402 standard was also built specifically for Stellar.
